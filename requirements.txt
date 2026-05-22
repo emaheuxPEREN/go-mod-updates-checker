@@ -1,0 +1,10 @@
+tyro~=1.0
+pydantic~=2.13
+semver~=3.0
+requests~=2.34
+urllib3 # already constrained by requests
+
+# dev
+black
+isort
+mypy
