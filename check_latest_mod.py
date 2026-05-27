@@ -178,10 +178,10 @@ class LatestVersionRequest:
     @cached_property
     def filter(self) -> str:
         _, version = self.package_and_version
-        rx = f"^v{version.major}\\."
-        if self.keep == "major":
-            return rx
-        return rx + f"{version.minor}\\."
+        version_prefix = f"v{version.major}."
+        if self.keep != "major":
+            version_prefix += f"{version.minor}."
+        return f'hasPrefix(version,"{version_prefix}")'
 
     def to_be_included(self, v: VersionResult, /) -> bool:
         return (
