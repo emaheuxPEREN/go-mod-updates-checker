@@ -1,7 +1,9 @@
+import logging
 import re
 import subprocess
 from dataclasses import dataclass
 from functools import cached_property
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import requests
@@ -10,6 +12,10 @@ import tyro
 from pydantic import AnyHttpUrl, AwareDatetime, BaseModel, ConfigDict, Field, PlainSerializer, computed_field
 from semver import Version
 from urllib3.util.retry import Retry
+
+from parse_go_mod import GoMod
+
+logging.basicConfig(format="[%(levelname)-7s] %(message)s")  # %(asctime)s %(name)s:
 
 API_BASE_URL = "https://pkg.go.dev/v1beta"
 """Ref: <https://pkg.go.dev/v1beta/api>"""
@@ -53,6 +59,7 @@ class GoModListOrigin(BaseModel):
 class GoModListResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
+    GoMod: Path | None = None
     GoVersion: str | None = None
     Origin: GoModListOrigin | None = None
 
@@ -66,6 +73,13 @@ class GoModListResponse(BaseModel):
             e.add_note(f"$ {subprocess.list2cmdline(cmd)}\n{out}")
             raise
 
+    def get_go_version_min(self) -> Version | None:
+        if self.GoVersion is not None:
+            return Version.parse(self.GoVersion.removeprefix("go"), optional_minor_and_patch=True)
+        if self.GoMod is None:
+            return None
+        return GoMod.new(self.GoMod.read_text()).go_version_min
+
 
 def _as_go_pkg_url(pkg: str) -> str:
     return f"https://pkg.go.dev/{pkg}"
@@ -75,8 +89,15 @@ def _is_false(v: bool | None) -> bool:
     return not v
 
 
+def _serialize_go_version(v: Version) -> str:
+    return f"go{v}"
+
+
 class VersionResult(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(
+        extra="ignore",
+        arbitrary_types_allowed=True,  # for Version
+    )
 
     modulePath: Annotated[str, PlainSerializer(_as_go_pkg_url)]
     repoUrl: AnyHttpUrl | None = None  # lazy added from details
@@ -84,7 +105,7 @@ class VersionResult(BaseModel):
     # latestVersion: str # confusing
 
     commitTime: AwareDatetime
-    goVersionMin: str | None = None  # lazy added from details
+    goVersionMin: Annotated[Version, PlainSerializer(_serialize_go_version)] | None = None  # lazy added from details
 
     deprecated: Annotated[bool, Field(exclude_if=_is_false)]
     retracted: Annotated[bool, Field(exclude_if=_is_false)]
@@ -97,15 +118,10 @@ class VersionResult(BaseModel):
     def version_parsed(self) -> Version:
         return Version.parse(self.version.removeprefix("v"), optional_minor_and_patch=False)
 
-    @cached_property
-    def go_version_min_parsed(self) -> Version:
-        assert self.goVersionMin is not None, self
-        return Version.parse(self.goVersionMin.removeprefix("go"), optional_minor_and_patch=True)
-
     def add_details(self) -> None:
         details = GoModListResponse.get(self.modulePath, self.version)
-        if details.GoVersion is not None:
-            self.goVersionMin = f"go{details.GoVersion}"  # less ambiguous in output
+        if (go_version_min := details.get_go_version_min()) is not None:
+            self.goVersionMin = go_version_min
         if details.Origin is not None:
             tag = details.Origin.Ref.removeprefix("refs/tags/")
             self.repoUrl = AnyHttpUrl(f"{details.Origin.URL}/tree/{tag}")
@@ -152,7 +168,7 @@ class LatestVersionRequest:
     """Package @ current version, example: 'github.com/org/name@v1.2.3'"""
 
     go_version_max: Annotated[str | None, tyro.conf.arg(aliases=["--go"])] = GO_VERSION_DEFAULT
-    """Maximum Go version admitted for packages, use empty string to allow any Go version"""
+    """Maximum Go version admitted for packages (included), use empty string to allow any Go version"""
 
     keep: Annotated[Literal["major", "minor"], tyro.conf.arg(aliases=["-k"])] = "minor"
     """Keep either: minor = x.y.* or major = x.*"""
@@ -198,17 +214,22 @@ class LatestVersionRequest:
             reverse=True,
         )
         if not all_versions:
-            raise ValueError(f"{self.package_at_version}: no matching version, try --deprecated-ok")
+            raise ValueError(
+                f"{self.package_at_version}: no matching version, try --prerelease-ok / --deprecated-ok / --retracted_ok"
+            )
         if not self.go_version_max:
             return all_versions[0]
         min_go_version: Version | None = None
         for v in all_versions:
             v.add_details()
-            # we assume no constraint when go version is NOT specified in package go.mod
-            if v.goVersionMin is None or v.go_version_min_parsed <= self.go_version_max_parsed:
+            # we assume no constraint when Go version is NOT specified in package go.mod
+            if v.goVersionMin is None:
+                logging.warning(f"{pkg}@{v.version}: unable to get minimum Go version -> assuming OK")
                 return v
-            if min_go_version is None or v.go_version_min_parsed < min_go_version:
-                min_go_version = v.go_version_min_parsed
+            if v.goVersionMin <= self.go_version_max_parsed:
+                return v
+            if min_go_version is None or v.goVersionMin < min_go_version:
+                min_go_version = v.goVersionMin
         assert min_go_version is not None
         raise ValueError(f"{self.package_at_version}: no matching version, minimum Go version = {min_go_version}")
 

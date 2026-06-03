@@ -9,13 +9,15 @@ that are compatible with an upper limit for Go version.
 python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
 ```
 
+Symlink `go-mod-updates-checker` script somewhere in your `PATH`
+
 ## Usage
 
-```shell
-python parse_go_mod.py < go.mod | xargs -P 8 -I{} python check_latest_mod.py --only-outdated --go 1.24 "{}"
-```
+Within a folder containing `go.mod`: execute `go-mod-updates-checker`
 
-Additional flags for commands:
+### Advanced usage
+
+Cf. help of Python commands:
 
 ```shell
 python parse_go_mod.py -h

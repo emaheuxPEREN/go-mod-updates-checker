@@ -8,3 +8,4 @@ urllib3 # already constrained by requests
 black
 isort
 mypy
+pyright
