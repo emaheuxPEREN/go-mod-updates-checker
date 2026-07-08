@@ -132,7 +132,7 @@ class VersionsResponse(BaseModel):
 
     total: int
     nextPageToken: str | None = None
-    items: list[VersionResult]
+    items: list[VersionResult] | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -153,7 +153,7 @@ class VersionsRequest:
         token: str | None = None
         while True:
             resp = self._get_one(token)
-            versions += resp.items
+            versions += resp.items or []
             token = resp.nextPageToken
             if token is None:
                 break
