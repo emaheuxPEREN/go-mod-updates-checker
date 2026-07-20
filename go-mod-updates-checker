@@ -3,8 +3,13 @@
 set -euo pipefail
 
 DIR=$(dirname "$(realpath "$0")")
-PY=$DIR/.venv/bin/python
+PY="$DIR"/.venv/bin/python
 JOBS=${JOBS:-8}
+
+if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
+  "$PY" "$DIR/check_latest_mod.py" --help
+  exit 1
+fi
 
 parsed=$("$PY" "$DIR/parse_go_mod.py" ${GO_MOD_PARSER_FLAGS:-} < ./go.mod)
 deps=$(echo "$parsed" | jq -r .deps[])
@@ -12,4 +17,4 @@ go_version_min=$(echo "$parsed" | jq -r .go_version_min)
 
 GO_MOD_UPDATES_CHECKER_FLAGS=${GO_MOD_UPDATES_CHECKER_FLAGS:---only-outdated --go "$go_version_min"}
 
-echo "$deps" | xargs -P "$JOBS" -I{} "$PY" "$DIR/check_latest_mod.py" $GO_MOD_UPDATES_CHECKER_FLAGS "{}"
+echo "$deps" | xargs -P "$JOBS" -I{} "$PY" "$DIR/check_latest_mod.py" $GO_MOD_UPDATES_CHECKER_FLAGS $@ "{}"
