@@ -1,6 +1,7 @@
 import logging
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -104,6 +105,8 @@ class VersionResult(BaseModel):
     version: str  # startswith 'v' prefix
     # latestVersion: str # confusing
 
+    current: str | None = None  # from context
+
     commitTime: AwareDatetime
     goVersionMin: Annotated[Version, PlainSerializer(_serialize_go_version)] | None = None  # lazy added from details
 
@@ -139,6 +142,7 @@ class VersionsResponse(BaseModel):
 class VersionsRequest:
     package: str
     filter: str
+    context: Mapping[str, object]
 
     def _get_one(self, token: str | None = None) -> VersionsResponse:
         r = REQUESTER.get(
@@ -146,7 +150,10 @@ class VersionsRequest:
             params={"token": token, "filter": self.filter},
         )
         r.raise_for_status()
-        return VersionsResponse.model_validate_json(r.content)
+        resp = VersionsResponse.model_validate_json(r.content)
+        if resp.items is None:
+            return resp
+        return resp.model_copy(update={"items": [it.model_copy(update=self.context) for it in resp.items]})
 
     def get_all(self) -> list[VersionResult]:
         versions: list[VersionResult] = []
@@ -207,9 +214,17 @@ class LatestVersionRequest:
         )
 
     def __call__(self) -> VersionResult:
-        pkg, _ = self.package_and_version
+        pkg, cur_version = self.package_and_version
         all_versions = sorted(
-            [v for v in VersionsRequest(package=pkg, filter=self.filter).get_all() if self.to_be_included(v)],
+            [
+                v
+                for v in VersionsRequest(
+                    package=pkg,
+                    filter=self.filter,
+                    context={"current": str(cur_version)},
+                ).get_all()
+                if self.to_be_included(v)
+            ],
             key=lambda v: v.version_parsed,
             reverse=True,
         )
