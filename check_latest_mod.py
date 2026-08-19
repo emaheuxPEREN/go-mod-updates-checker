@@ -2,7 +2,7 @@ import logging
 import re
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -16,10 +16,12 @@ from urllib3.util.retry import Retry
 
 from parse_go_mod import GoMod
 
-logging.basicConfig(format="[%(levelname)-7s] %(message)s")  # %(asctime)s %(name)s:
+logging.basicConfig(format="[%(levelname)-7s] %(message)s", level=logging.INFO)  # %(asctime)s %(name)s:
 
-API_BASE_URL = "https://pkg.go.dev/v1beta"
-"""Ref: <https://pkg.go.dev/v1beta/api>"""
+LOGGER = logging.getLogger()
+
+API_BASE_URL = "https://pkg.go.dev/v1"
+"""Ref: <https://pkg.go.dev/v1/api>"""
 
 
 GO_VERSION_DEFAULT = subprocess.check_output(["go", "env", "GOVERSION"], text=True).strip().removeprefix("go")
@@ -27,12 +29,14 @@ GO_VERSION_DEFAULT = subprocess.check_output(["go", "env", "GOVERSION"], text=Tr
 
 @dataclass(frozen=True, kw_only=True)
 class RetryableAPI:
-    retry: Retry = Retry(
-        total=5,
-        status_forcelist=[429],
-        allowed_methods=["GET"],
-        backoff_factor=1,  # exponential backoff: 1s, 2s, 4s...
-        respect_retry_after_header=True,
+    retry: Retry = field(
+        default_factory=lambda: Retry(
+            total=5,
+            status_forcelist=[429],
+            allowed_methods=["GET"],
+            backoff_factor=0.5,  # exponential backoff: 1s, 2s, 4s...
+            respect_retry_after_header=True,
+        )
     )
 
     @cached_property
@@ -105,7 +109,7 @@ class VersionResult(BaseModel):
     version: str  # startswith 'v' prefix
     # latestVersion: str # confusing
 
-    current: str | None = None  # from context
+    current: str | None = None  # from context (with 'v' prefix)
 
     commitTime: AwareDatetime
     goVersionMin: Annotated[Version, PlainSerializer(_serialize_go_version)] | None = None  # lazy added from details
@@ -221,7 +225,7 @@ class LatestVersionRequest:
                 for v in VersionsRequest(
                     package=pkg,
                     filter=self.filter,
-                    context={"current": str(cur_version)},
+                    context={"current": f"v{cur_version}"},
                 ).get_all()
                 if self.to_be_included(v)
             ],
@@ -239,7 +243,7 @@ class LatestVersionRequest:
             v.add_details()
             # we assume no constraint when Go version is NOT specified in package go.mod
             if v.goVersionMin is None:
-                logging.warning(f"{pkg}@{v.version}: unable to get minimum Go version -> assuming OK")
+                LOGGER.warning(f"{pkg}@{v.version}: unable to get minimum Go version -> assuming OK")
                 return v
             if v.goVersionMin <= self.go_version_max_parsed:
                 return v
