@@ -32,7 +32,7 @@ class RetryableAPI:
     retry: Retry = field(
         default_factory=lambda: Retry(
             total=5,
-            status_forcelist=[429],
+            status_forcelist=[429, 500],
             allowed_methods=["GET"],
             backoff_factor=0.5,  # exponential backoff: 1s, 2s, 4s...
             respect_retry_after_header=True,
@@ -208,6 +208,7 @@ class LatestVersionRequest:
         version_prefix = f"v{version.major}."
         if self.keep != "major":
             version_prefix += f"{version.minor}."
+        assert '"' not in version_prefix, version_prefix
         return f'hasPrefix(version,"{version_prefix}")'
 
     def to_be_included(self, v: VersionResult, /) -> bool:
