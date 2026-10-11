@@ -5,7 +5,6 @@ requests~=2.34
 urllib3 # already constrained by requests
 
 # dev
-black
-isort
+ruff
 mypy
 pyright
